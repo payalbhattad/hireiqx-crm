@@ -21,6 +21,7 @@
     "react-dropzone": "^16.0.0",
     "react-router-dom": "^7.18.1",
     "recharts": "^3.9.2",
+    "resend": "^6.17.2",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

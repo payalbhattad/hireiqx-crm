@@ -17,5 +17,17 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // Standard fetch-on-mount effects call async loaders that set state
+      // after awaiting; this heuristic rule flags them as false positives.
+      'react-hooks/set-state-in-effect': 'off',
+    },
+  },
+  {
+    // Vercel serverless functions run in Node, not the browser.
+    files: ['api/**/*.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
   },
 ])
