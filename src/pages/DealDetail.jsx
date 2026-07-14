@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -13,14 +13,24 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { STAGES, STAGE_COLORS, ACTIVITY_TYPES } from '../lib/constants'
-import { formatDate, formatDateTime, initials, sanitize, todayISO } from '../lib/format'
+import {
+  STAGES,
+  STAGE_COLORS,
+  ACTIVITY_TYPES,
+  TASK_TYPES,
+  DEAL_REASON_OPTIONS,
+  OUTCOMES,
+} from '../lib/constants'
+import { formatCurrency, formatDate, formatDateTime, initials, sanitize, todayISO } from '../lib/format'
 import Modal from '../components/ui/Modal'
+import CompanySearchSelect from '../components/ui/CompanySearchSelect'
 
 const inputCls =
   'rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
 
 const ACTIVITY_ICONS = { call: Phone, email: Mail, note: FileText, meeting: Users }
+
+const FOUNDER_EMAILS = ['brad@hireiqx.com', 'robert@hireiqx.com']
 
 function EmailModal({ deal, onClose, onSent }) {
   const { session, user } = useAuth()
@@ -109,39 +119,58 @@ function EmailModal({ deal, onClose, onSent }) {
 
 export default function DealDetail() {
   const { id } = useParams()
-  const { user } = useAuth()
+  const { user, session } = useAuth()
   const [deal, setDeal] = useState(null)
   const [activities, setActivities] = useState([])
   const [tasks, setTasks] = useState([])
+  const [notes, setNotes] = useState([])
   const [profiles, setProfiles] = useState([])
+  const [contacts, setContacts] = useState([])
+  const [companyId, setCompanyId] = useState('')
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('activity')
   const [showEmail, setShowEmail] = useState(false)
 
   const [title, setTitle] = useState('')
   const [activityForm, setActivityForm] = useState({ type: 'note', body: '' })
-  const [taskForm, setTaskForm] = useState({ title: '', due_date: '' })
+  const [taskForm, setTaskForm] = useState({ task_type: 'Call', due_date: '' })
+  const [noteBody, setNoteBody] = useState('')
 
   const load = useCallback(async () => {
-    const [dealRes, actsRes, tasksRes, profilesRes] = await Promise.all([
-      supabase
-        .from('deals')
-        .select('*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(id, full_name, email)')
-        .eq('id', id)
-        .maybeSingle(),
+    const dealRes = await supabase
+      .from('deals')
+      .select('*, contact:contacts(*, company:companies(id, name)), assignee:profiles!deals_assigned_to_fkey(id, full_name, email)')
+      .eq('id', id)
+      .maybeSingle()
+
+    const dealContactId = dealRes.data?.contact_id ?? null
+    const notesFilter = dealContactId
+      ? `deal_id.eq.${id},contact_id.eq.${dealContactId}`
+      : `deal_id.eq.${id}`
+
+    const [actsRes, tasksRes, notesRes, profilesRes, contactsRes] = await Promise.all([
       supabase
         .from('activities')
         .select('*, creator:profiles!activities_created_by_fkey(full_name, email)')
         .eq('deal_id', id)
         .order('created_at', { ascending: true }),
       supabase.from('tasks').select('*').eq('deal_id', id).order('due_date', { ascending: true }),
+      supabase
+        .from('notes')
+        .select('*, creator:profiles!notes_created_by_fkey(full_name, email)')
+        .or(notesFilter)
+        .order('created_at', { ascending: false }),
       supabase.from('profiles').select('id, full_name, email').order('full_name'),
+      supabase.from('contacts').select('id, full_name, company_id').order('full_name'),
     ])
     setDeal(dealRes.data ?? null)
     setTitle(dealRes.data?.title ?? '')
+    setCompanyId(dealRes.data?.contact?.company_id ?? '')
     setActivities(actsRes.data ?? [])
     setTasks(tasksRes.data ?? [])
+    setNotes(notesRes.data ?? [])
     setProfiles(profilesRes.data ?? [])
+    setContacts(contactsRes.data ?? [])
     setLoading(false)
   }, [id])
 
@@ -152,13 +181,68 @@ export default function DealDetail() {
   const updateDeal = async (patch) => {
     setDeal((d) => ({ ...d, ...patch }))
     await supabase.from('deals').update(patch).eq('id', id)
-    if ('assigned_to' in patch || 'contact_id' in patch) load()
+    if (['assigned_to', 'contact_id', 'num_seats', 'arr_override'].some((k) => k in patch)) load()
   }
 
   const handleTitleBlur = () => {
     const clean = sanitize(title, 200)
     if (clean && clean !== deal.title) updateDeal({ title: clean })
     else setTitle(deal.title)
+  }
+
+  const contactsForCompany = useMemo(
+    () => contacts.filter((c) => c.company_id === companyId),
+    [contacts, companyId],
+  )
+
+  const handleCompanySelect = (company) => {
+    setCompanyId(company?.id ?? '')
+    if ((deal?.contact?.company_id ?? '') !== (company?.id ?? '')) {
+      updateDeal({ contact_id: null })
+    }
+  }
+
+  const notifyFounders = async (wonDeal, contact) => {
+    const companyName = contact?.company?.name || wonDeal.title
+    const bodyLines = [
+      `Company: ${companyName}`,
+      `Primary Contact: ${contact?.full_name || 'n/a'}`,
+      `Sales Rep: ${wonDeal.assignee?.full_name || wonDeal.assignee?.email || 'Unassigned'}`,
+      `ARR: ${formatCurrency(wonDeal.estimated_arr)}`,
+      `Number of Seats: ${wonDeal.num_seats ?? 'n/a'}`,
+      `Plan Selected: ${wonDeal.plan_selected || 'n/a'}`,
+      `Kickoff Date: ${wonDeal.kickoff_date ? formatDate(wonDeal.kickoff_date) : 'n/a'}`,
+    ]
+    try {
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          to: FOUNDER_EMAILS,
+          subject: `🎉 New Deal Won — ${companyName}`,
+          body: bodyLines.join('\n'),
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok && json.success) {
+        await supabase.from('deals').update({ founder_notified: true }).eq('id', wonDeal.id)
+        setDeal((d) => ({ ...d, founder_notified: true }))
+      }
+    } catch {
+      // best-effort — founder_notified stays false so this can be retried on the next save
+    }
+  }
+
+  const handleOutcomeChange = async (value) => {
+    const wasNotified = deal.founder_notified
+    const contact = deal.contact
+    await updateDeal({ outcome: value || null })
+    if (value === 'Won' && !wasNotified) {
+      await notifyFounders({ ...deal, outcome: value }, contact)
+    }
   }
 
   const handleLogActivity = async (e) => {
@@ -179,23 +263,42 @@ export default function DealDetail() {
 
   const handleAddTask = async (e) => {
     e.preventDefault()
-    const taskTitle = sanitize(taskForm.title, 200)
-    if (!taskTitle) return
+    if (!taskForm.task_type) return
     const { error } = await supabase.from('tasks').insert({
       deal_id: id,
-      title: taskTitle,
+      company_id: contact?.company_id ?? null,
+      contact_id: contact?.id ?? null,
+      task_type: taskForm.task_type,
       due_date: taskForm.due_date || null,
       assigned_to: deal.assigned_to ?? user.id,
+      task_status: 'Open',
     })
     if (!error) {
-      setTaskForm({ title: '', due_date: '' })
+      setTaskForm({ task_type: 'Call', due_date: '' })
       load()
     }
   }
 
   const toggleTask = async (task) => {
-    setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, completed: !t.completed } : t)))
-    await supabase.from('tasks').update({ completed: !task.completed }).eq('id', task.id)
+    const nextStatus = task.task_status === 'Complete' ? 'Open' : 'Complete'
+    setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, task_status: nextStatus } : t)))
+    await supabase.from('tasks').update({ task_status: nextStatus }).eq('id', task.id)
+  }
+
+  const handleAddNote = async (e) => {
+    e.preventDefault()
+    const clean = sanitize(noteBody, 5000)
+    if (!clean) return
+    const { error } = await supabase.from('notes').insert({
+      body: clean,
+      deal_id: id,
+      contact_id: deal.contact?.id ?? null,
+      created_by: user.id,
+    })
+    if (!error) {
+      setNoteBody('')
+      load()
+    }
   }
 
   if (loading) {
@@ -215,6 +318,7 @@ export default function DealDetail() {
 
   const contact = deal.contact
   const today = todayISO()
+  const showSeatsAndArr = deal.stage !== 'closed' || deal.outcome === 'Won'
 
   return (
     <div className="p-8">
@@ -243,32 +347,83 @@ export default function DealDetail() {
             Send Email
           </button>
         </div>
+
         <div className="mt-4 flex flex-wrap items-end gap-6">
-          <div>
-            <p className="text-xs font-medium uppercase text-slate-500">Value</p>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              defaultValue={deal.value}
-              onBlur={(e) => updateDeal({ value: Number(e.target.value) || 0 })}
-              className={`mt-1 w-32 ${inputCls}`}
+          <div className="w-56">
+            <CompanySearchSelect
+              value={companyId}
+              onSelect={handleCompanySelect}
+              labelClassName="text-xs font-medium uppercase text-slate-500"
             />
           </div>
           <div>
-            <p className="text-xs font-medium uppercase text-slate-500">Stage</p>
+            <p className="text-xs font-medium uppercase text-slate-500">Contact</p>
             <select
-              value={deal.stage}
-              onChange={(e) => updateDeal({ stage: e.target.value })}
-              className={`mt-1 ${inputCls} ${STAGE_COLORS[deal.stage].badge}`}
+              value={deal.contact_id ?? ''}
+              onChange={(e) => updateDeal({ contact_id: e.target.value || null })}
+              disabled={!companyId}
+              className={`mt-1 w-44 ${inputCls}`}
             >
-              {STAGES.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
+              <option value="">{companyId ? '— None —' : 'Select a company first'}</option>
+              {contactsForCompany.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.full_name}
                 </option>
               ))}
             </select>
           </div>
+
+          {showSeatsAndArr && (
+            <>
+              <div>
+                <p className="text-xs font-medium uppercase text-slate-500">Number of Seats</p>
+                <input
+                  key={`seats-${deal.updated_at}`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  defaultValue={deal.num_seats ?? ''}
+                  onBlur={(e) => updateDeal({ num_seats: e.target.value === '' ? null : Number(e.target.value) })}
+                  className={`mt-1 w-28 ${inputCls}`}
+                />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-slate-500">Estimated ARR</p>
+                <input
+                  key={`arr-${deal.updated_at}`}
+                  type="number"
+                  min="0"
+                  step="any"
+                  defaultValue={deal.estimated_arr ?? ''}
+                  onBlur={(e) =>
+                    updateDeal({
+                      estimated_arr: e.target.value === '' ? null : Number(e.target.value),
+                      arr_override: true,
+                    })
+                  }
+                  className={`mt-1 w-32 ${inputCls}`}
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  {deal.arr_override
+                    ? 'Manually set'
+                    : `Auto-calculated: ${formatCurrency((deal.num_seats || 0) * 500)}`}
+                </p>
+              </div>
+            </>
+          )}
+
+          {deal.stage === 'demo_scheduled' && (
+            <div>
+              <p className="text-xs font-medium uppercase text-slate-500">Demo Date</p>
+              <input
+                type="date"
+                value={deal.demo_date ?? ''}
+                onChange={(e) => updateDeal({ demo_date: e.target.value || null })}
+                className={`mt-1 ${inputCls}`}
+              />
+            </div>
+          )}
+
           <div>
             <p className="text-xs font-medium uppercase text-slate-500">Assigned To</p>
             <select
@@ -284,15 +439,121 @@ export default function DealDetail() {
               ))}
             </select>
           </div>
+
+          {deal.stage !== 'closed' && (
+            <div>
+              <p className="text-xs font-medium uppercase text-slate-500">Expected Close</p>
+              <input
+                type="date"
+                value={deal.expected_close_date ?? ''}
+                onChange={(e) => updateDeal({ expected_close_date: e.target.value || null })}
+                className={`mt-1 ${inputCls}`}
+              />
+            </div>
+          )}
+
           <div>
-            <p className="text-xs font-medium uppercase text-slate-500">Expected Close</p>
-            <input
-              type="date"
-              value={deal.expected_close_date ?? ''}
-              onChange={(e) => updateDeal({ expected_close_date: e.target.value || null })}
-              className={`mt-1 ${inputCls}`}
-            />
+            <p className="text-xs font-medium uppercase text-slate-500">Stage</p>
+            <select
+              value={deal.stage}
+              onChange={(e) => updateDeal({ stage: e.target.value })}
+              className={`mt-1 ${inputCls} ${STAGE_COLORS[deal.stage].badge}`}
+            >
+              {STAGES.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
           </div>
+
+          {deal.stage === 'decision_pending' && (
+            <div>
+              <p className="text-xs font-medium uppercase text-slate-500">Decision Criteria</p>
+              <select
+                value={deal.decision_criteria ?? ''}
+                onChange={(e) => updateDeal({ decision_criteria: e.target.value || null })}
+                className={`mt-1 ${inputCls}`}
+              >
+                <option value="">— None —</option>
+                {DEAL_REASON_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {deal.stage === 'closed' && (
+            <div>
+              <p className="text-xs font-medium uppercase text-slate-500">Outcome</p>
+              <select
+                value={deal.outcome ?? ''}
+                onChange={(e) => handleOutcomeChange(e.target.value)}
+                className={`mt-1 ${inputCls}`}
+              >
+                <option value="">— None —</option>
+                {OUTCOMES.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {deal.stage === 'closed' && deal.outcome === 'Lost' && (
+            <>
+              <div>
+                <p className="text-xs font-medium uppercase text-slate-500">Lost Reason</p>
+                <select
+                  value={deal.lost_reason ?? ''}
+                  onChange={(e) => updateDeal({ lost_reason: e.target.value || null })}
+                  className={`mt-1 ${inputCls}`}
+                >
+                  <option value="">— None —</option>
+                  {DEAL_REASON_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-slate-500">Follow-Up Date</p>
+                <input
+                  type="date"
+                  value={deal.followup_date ?? ''}
+                  onChange={(e) => updateDeal({ followup_date: e.target.value || null })}
+                  className={`mt-1 ${inputCls}`}
+                />
+              </div>
+            </>
+          )}
+
+          {deal.stage === 'closed' && deal.outcome === 'Won' && (
+            <>
+              <div>
+                <p className="text-xs font-medium uppercase text-slate-500">Plan Selected</p>
+                <input
+                  key={`plan-${deal.updated_at}`}
+                  defaultValue={deal.plan_selected ?? ''}
+                  onBlur={(e) => updateDeal({ plan_selected: sanitize(e.target.value, 200) || null })}
+                  className={`mt-1 w-40 ${inputCls}`}
+                />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-slate-500">Kickoff Date</p>
+                <input
+                  type="date"
+                  value={deal.kickoff_date ?? ''}
+                  onChange={(e) => updateDeal({ kickoff_date: e.target.value || null })}
+                  className={`mt-1 ${inputCls}`}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -307,7 +568,12 @@ export default function DealDetail() {
                   {initials(contact.full_name)}
                 </div>
                 <div>
-                  <p className="font-semibold text-slate-900">{contact.full_name}</p>
+                  <Link
+                    to={`/contacts/${contact.id}`}
+                    className="font-semibold text-slate-900 hover:text-indigo-600 hover:underline"
+                  >
+                    {contact.full_name}
+                  </Link>
                   {contact.title && <p className="text-sm text-slate-500">{contact.title}</p>}
                 </div>
               </div>
@@ -315,7 +581,9 @@ export default function DealDetail() {
                 {contact.company && (
                   <div className="flex items-center gap-2 text-slate-600">
                     <Building2 className="h-4 w-4 text-slate-400" />
-                    {contact.company}
+                    <Link to={`/companies/${contact.company.id}`} className="text-indigo-600 hover:underline">
+                      {contact.company.name}
+                    </Link>
                   </div>
                 )}
                 {contact.email && (
@@ -343,12 +611,13 @@ export default function DealDetail() {
           )}
         </div>
 
-        {/* Activity / Tasks */}
+        {/* Activity / Tasks / Notes */}
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-2">
           <div className="flex border-b border-slate-200">
             {[
               { id: 'activity', label: `Activity (${activities.length})` },
-              { id: 'tasks', label: `Tasks (${tasks.filter((t) => !t.completed).length})` },
+              { id: 'tasks', label: `Tasks (${tasks.filter((t) => t.task_status !== 'Complete').length})` },
+              { id: 'notes', label: `Notes (${notes.length})` },
             ].map((t) => (
               <button
                 key={t.id}
@@ -419,14 +688,15 @@ export default function DealDetail() {
                 </div>
               </form>
             </div>
-          ) : (
+          ) : tab === 'tasks' ? (
             <div className="p-5">
               {tasks.length === 0 ? (
                 <p className="py-6 text-center text-sm text-slate-500">No tasks for this deal yet.</p>
               ) : (
                 <ul className="space-y-2">
                   {tasks.map((t) => {
-                    const overdue = !t.completed && t.due_date && t.due_date < today
+                    const overdue = t.due_date && t.due_date < today
+                    const complete = t.task_status === 'Complete'
                     return (
                       <li
                         key={t.id}
@@ -437,19 +707,15 @@ export default function DealDetail() {
                         <button
                           onClick={() => toggleTask(t)}
                           className={`flex h-5 w-5 items-center justify-center rounded border ${
-                            t.completed
+                            complete
                               ? 'border-green-600 bg-green-600 text-white'
                               : 'border-slate-300 bg-white hover:border-indigo-500'
                           }`}
                         >
-                          {t.completed && <Check className="h-3.5 w-3.5" />}
+                          {complete && <Check className="h-3.5 w-3.5" />}
                         </button>
-                        <span
-                          className={`flex-1 text-sm ${
-                            t.completed ? 'text-slate-400 line-through' : 'text-slate-700'
-                          }`}
-                        >
-                          {t.title}
+                        <span className={`flex-1 text-sm ${complete ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                          {t.task_type}
                         </span>
                         {t.due_date && (
                           <span className={`text-xs font-medium ${overdue ? 'text-red-600' : 'text-slate-500'}`}>
@@ -464,13 +730,17 @@ export default function DealDetail() {
               )}
 
               <form onSubmit={handleAddTask} className="mt-6 flex gap-3 border-t border-slate-200 pt-4">
-                <input
-                  required
-                  placeholder="New task…"
-                  value={taskForm.title}
-                  onChange={(e) => setTaskForm((f) => ({ ...f, title: e.target.value }))}
-                  className={`flex-1 ${inputCls}`}
-                />
+                <select
+                  value={taskForm.task_type}
+                  onChange={(e) => setTaskForm((f) => ({ ...f, task_type: e.target.value }))}
+                  className={inputCls}
+                >
+                  {TASK_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
                 <input
                   type="date"
                   value={taskForm.due_date}
@@ -483,6 +753,42 @@ export default function DealDetail() {
                 >
                   Add Task
                 </button>
+              </form>
+            </div>
+          ) : (
+            <div className="p-5">
+              {notes.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-500">No notes yet.</p>
+              ) : (
+                <ul className="space-y-4">
+                  {notes.map((n) => (
+                    <li key={n.id} className="border-b border-slate-100 pb-4 last:border-0 last:pb-0">
+                      <p className="whitespace-pre-wrap text-sm text-slate-700">{n.body}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {n.creator?.full_name || n.creator?.email || 'Unknown'} · {formatDateTime(n.created_at)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <form onSubmit={handleAddNote} className="mt-6 border-t border-slate-200 pt-4">
+                <textarea
+                  required
+                  rows={3}
+                  placeholder="Add a note…"
+                  value={noteBody}
+                  onChange={(e) => setNoteBody(e.target.value)}
+                  className={`w-full ${inputCls}`}
+                />
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                  >
+                    Add Note
+                  </button>
+                </div>
               </form>
             </div>
           )}

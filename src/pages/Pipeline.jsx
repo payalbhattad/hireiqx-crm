@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import {
   DndContext,
   DragOverlay,
@@ -12,19 +12,23 @@ import {
 import { Plus, Calendar } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { STAGES, STAGE_COLORS, STAGE_LABELS } from '../lib/constants'
+import { STAGES, STAGE_COLORS, STAGE_LABELS, OUTCOME_COLORS } from '../lib/constants'
 import { formatCurrency, formatDate, initials, sanitize } from '../lib/format'
 import Modal from '../components/ui/Modal'
+import CompanySearchSelect from '../components/ui/CompanySearchSelect'
 
 const inputCls =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
 
-function DealCard({ deal, overlay = false }) {
+function DealCard({ deal, onStageChange, overlay = false }) {
   const navigate = useNavigate()
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: deal.id,
     data: { deal },
   })
+
+  const contact = deal.contact
+  const company = contact?.company
 
   return (
     <div
@@ -37,17 +41,55 @@ function DealCard({ deal, overlay = false }) {
     >
       <div className="mb-1 flex items-start justify-between gap-2">
         <p className="text-sm font-semibold text-slate-900">{deal.title}</p>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${STAGE_COLORS[deal.stage].badge}`}
-        >
-          {STAGE_LABELS[deal.stage]}
-        </span>
+        {deal.stage === 'closed' && deal.outcome && (
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${OUTCOME_COLORS[deal.outcome]}`}>
+            {deal.outcome}
+          </span>
+        )}
       </div>
-      {deal.contact?.company && (
-        <p className="mb-2 text-xs text-slate-500">{deal.contact.company}</p>
+
+      {company && (
+        <p className="text-xs text-slate-500">
+          <Link
+            to={`/companies/${company.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="hover:text-indigo-600 hover:underline"
+          >
+            {company.name}
+          </Link>
+        </p>
       )}
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-indigo-600">{formatCurrency(deal.value)}</span>
+      {contact && (
+        <p className="mb-2 text-xs text-slate-500">
+          <Link
+            to={`/contacts/${contact.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="hover:text-indigo-600 hover:underline"
+          >
+            {contact.full_name}
+          </Link>
+        </p>
+      )}
+
+      <div className="mb-2 flex items-center justify-between">
+        {deal.num_seats != null && <span className="text-xs text-slate-500">{deal.num_seats} seats</span>}
+        <span className="text-sm font-semibold text-indigo-600">{formatCurrency(deal.estimated_arr)}</span>
+      </div>
+
+      <div className="flex items-center justify-between gap-2">
+        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+          <select
+            value={deal.stage}
+            onChange={(e) => onStageChange(deal, e.target.value)}
+            className={`rounded-full border-0 px-2 py-0.5 text-[10px] font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 ${STAGE_COLORS[deal.stage].badge}`}
+          >
+            {STAGES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex items-center gap-2">
           {deal.expected_close_date && (
             <span className="flex items-center gap-1 text-xs text-slate-500">
@@ -69,9 +111,9 @@ function DealCard({ deal, overlay = false }) {
   )
 }
 
-function StageColumn({ stage, deals, onAdd }) {
+function StageColumn({ stage, deals, onAdd, onStageChange }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id })
-  const total = deals.reduce((sum, d) => sum + (Number(d.value) || 0), 0)
+  const total = deals.reduce((sum, d) => sum + (Number(d.estimated_arr) || 0), 0)
 
   return (
     <div className="flex w-72 shrink-0 flex-col">
@@ -92,7 +134,7 @@ function StageColumn({ stage, deals, onAdd }) {
         }`}
       >
         {deals.map((deal) => (
-          <DealCard key={deal.id} deal={deal} />
+          <DealCard key={deal.id} deal={deal} onStageChange={onStageChange} />
         ))}
         <button
           onClick={() => onAdd(stage.id)}
@@ -106,19 +148,39 @@ function StageColumn({ stage, deals, onAdd }) {
   )
 }
 
-function AddDealModal({ stage, contacts, profiles, onClose, onSaved }) {
+function AddDealModal({ stage, profiles, onClose, onSaved }) {
   const { user } = useAuth()
+  const [companyId, setCompanyId] = useState('')
+  const [contacts, setContacts] = useState([])
   const [form, setForm] = useState({
     title: '',
-    value: '',
     contact_id: '',
+    num_seats: '',
     assigned_to: user.id,
     expected_close_date: '',
   })
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  useEffect(() => {
+    supabase
+      .from('contacts')
+      .select('id, full_name, company_id')
+      .order('full_name')
+      .then(({ data }) => setContacts(data ?? []))
+  }, [])
+
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+
+  const contactsForCompany = useMemo(
+    () => contacts.filter((c) => c.company_id === companyId),
+    [contacts, companyId],
+  )
+
+  const handleCompanySelect = (company) => {
+    setCompanyId(company?.id ?? '')
+    setForm((f) => ({ ...f, contact_id: contacts.find((c) => c.id === f.contact_id)?.company_id === company?.id ? f.contact_id : '' }))
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -126,8 +188,8 @@ function AddDealModal({ stage, contacts, profiles, onClose, onSaved }) {
     setError('')
     const { error: dbError } = await supabase.from('deals').insert({
       title: sanitize(form.title, 200),
-      value: Number(form.value) || 0,
       contact_id: form.contact_id || null,
+      num_seats: form.num_seats === '' ? null : Number(form.num_seats),
       assigned_to: form.assigned_to || null,
       expected_close_date: form.expected_close_date || null,
       stage,
@@ -147,28 +209,32 @@ function AddDealModal({ stage, contacts, profiles, onClose, onSaved }) {
           <label className="mb-1 block text-sm font-medium text-slate-700">Title *</label>
           <input required value={form.title} onChange={set('title')} className={inputCls} />
         </div>
+
+        <CompanySearchSelect value={companyId} onSelect={handleCompanySelect} />
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Contact</label>
+          <select value={form.contact_id} onChange={set('contact_id')} disabled={!companyId} className={inputCls}>
+            <option value="">{companyId ? '— None —' : 'Select a company first'}</option>
+            {contactsForCompany.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.full_name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Value ($)</label>
-            <input type="number" min="0" step="any" value={form.value} onChange={set('value')} className={inputCls} />
+            <label className="mb-1 block text-sm font-medium text-slate-700">Number of Seats</label>
+            <input type="number" min="0" step="1" value={form.num_seats} onChange={set('num_seats')} className={inputCls} />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Expected Close</label>
             <input type="date" value={form.expected_close_date} onChange={set('expected_close_date')} className={inputCls} />
           </div>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">Contact</label>
-          <select value={form.contact_id} onChange={set('contact_id')} className={inputCls}>
-            <option value="">— None —</option>
-            {contacts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.full_name}
-                {c.company ? ` (${c.company})` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Assigned To</label>
           <select value={form.assigned_to} onChange={set('assigned_to')} className={inputCls}>
@@ -197,7 +263,6 @@ function AddDealModal({ stage, contacts, profiles, onClose, onSaved }) {
 
 export default function Pipeline() {
   const [deals, setDeals] = useState([])
-  const [contacts, setContacts] = useState([])
   const [profiles, setProfiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [addingToStage, setAddingToStage] = useState(null)
@@ -209,16 +274,14 @@ export default function Pipeline() {
   )
 
   const load = useCallback(async () => {
-    const [dealsRes, contactsRes, profilesRes] = await Promise.all([
+    const [dealsRes, profilesRes] = await Promise.all([
       supabase
         .from('deals')
-        .select('*, contact:contacts(id, full_name, company), assignee:profiles!deals_assigned_to_fkey(id, full_name, email)')
+        .select('*, contact:contacts(id, full_name, company_id, company:companies(id, name)), assignee:profiles!deals_assigned_to_fkey(id, full_name, email)')
         .order('created_at', { ascending: false }),
-      supabase.from('contacts').select('id, full_name, company').order('full_name'),
       supabase.from('profiles').select('id, full_name, email').order('full_name'),
     ])
     setDeals(dealsRes.data ?? [])
-    setContacts(contactsRes.data ?? [])
     setProfiles(profilesRes.data ?? [])
     setLoading(false)
   }, [])
@@ -233,7 +296,16 @@ export default function Pipeline() {
     return map
   }, [deals])
 
-  const handleDragEnd = async ({ active, over }) => {
+  const moveStage = useCallback(async (deal, targetStage) => {
+    if (!targetStage || deal.stage === targetStage) return
+    setDeals((ds) => ds.map((d) => (d.id === deal.id ? { ...d, stage: targetStage } : d)))
+    const { error } = await supabase.from('deals').update({ stage: targetStage }).eq('id', deal.id)
+    if (error) {
+      setDeals((ds) => ds.map((d) => (d.id === deal.id ? { ...d, stage: deal.stage } : d)))
+    }
+  }, [])
+
+  const handleDragEnd = ({ active, over }) => {
     setActiveDeal(null)
     if (!over) return
     const deal = active.data.current?.deal
@@ -241,12 +313,8 @@ export default function Pipeline() {
     const targetStage = STAGES.some((s) => s.id === over.id)
       ? over.id
       : deals.find((d) => d.id === over.id)?.stage
-    if (!deal || !targetStage || deal.stage === targetStage) return
-
-    const prev = deals
-    setDeals((ds) => ds.map((d) => (d.id === deal.id ? { ...d, stage: targetStage } : d)))
-    const { error } = await supabase.from('deals').update({ stage: targetStage }).eq('id', deal.id)
-    if (error) setDeals(prev) // revert on failure
+    if (!deal) return
+    moveStage(deal, targetStage)
   }
 
   return (
@@ -268,6 +336,7 @@ export default function Pipeline() {
                 stage={stage}
                 deals={byStage[stage.id]}
                 onAdd={setAddingToStage}
+                onStageChange={moveStage}
               />
             ))}
           </div>
@@ -278,7 +347,6 @@ export default function Pipeline() {
       {addingToStage && (
         <AddDealModal
           stage={addingToStage}
-          contacts={contacts}
           profiles={profiles}
           onClose={() => setAddingToStage(null)}
           onSaved={() => {

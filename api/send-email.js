@@ -33,11 +33,11 @@ export default async function handler(req, res) {
   }
 
   const { to, subject, body } = req.body ?? {}
-  const cleanTo = sanitize(to, 254)
+  const cleanTo = (Array.isArray(to) ? to : [to]).map((t) => sanitize(t, 254)).filter(Boolean)
   const cleanSubject = sanitize(subject, 300)
   const cleanBody = String(body ?? '').slice(0, 10000)
 
-  if (!EMAIL_RE.test(cleanTo)) {
+  if (cleanTo.length === 0 || !cleanTo.every((t) => EMAIL_RE.test(t))) {
     return res.status(400).json({ success: false, error: 'Invalid recipient email' })
   }
   if (!cleanSubject || !cleanBody.trim()) {
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     const resend = new Resend(process.env.RESEND_API_KEY)
     const { error } = await resend.emails.send({
       from: process.env.EMAIL_FROM || 'HireIQX CRM <onboarding@resend.dev>',
-      to: cleanTo,
+      to: cleanTo.length === 1 ? cleanTo[0] : cleanTo,
       subject: cleanSubject,
       text: cleanBody,
     })

@@ -44,7 +44,7 @@ export default function Dashboard() {
   useEffect(() => {
     const today = todayISO()
     Promise.all([
-      supabase.from('deals').select('id, title, value, stage, assigned_to, updated_at'),
+      supabase.from('deals').select('id, title, estimated_arr, stage, outcome, assigned_to, updated_at'),
       supabase
         .from('activities')
         .select('*, deal:deals(id, title), creator:profiles!activities_created_by_fkey(full_name, email)')
@@ -54,7 +54,7 @@ export default function Dashboard() {
         .from('tasks')
         .select('id', { count: 'exact', head: true })
         .eq('due_date', today)
-        .eq('completed', false),
+        .eq('task_status', 'Open'),
       supabase.from('profiles').select('id, full_name, email'),
     ]).then(([dealsRes, actsRes, tasksRes, profilesRes]) => {
       setDeals(dealsRes.data ?? [])
@@ -69,12 +69,12 @@ export default function Dashboard() {
     const open = deals.filter((d) => OPEN_STAGES.includes(d.stage))
     const now = new Date()
     const closedThisMonth = deals.filter((d) => {
-      if (d.stage !== 'closed_won') return false
+      if (d.stage !== 'closed' || d.outcome !== 'Won') return false
       const closed = new Date(d.updated_at)
       return closed.getFullYear() === now.getFullYear() && closed.getMonth() === now.getMonth()
     })
     return {
-      pipelineValue: open.reduce((s, d) => s + (Number(d.value) || 0), 0),
+      pipelineValue: open.reduce((s, d) => s + (Number(d.estimated_arr) || 0), 0),
       closedThisMonth: closedThisMonth.length,
       openDeals: open.length,
     }
@@ -93,11 +93,11 @@ export default function Dashboard() {
     if (!isAdmin) return []
     return profiles
       .map((p) => {
-        const won = deals.filter((d) => d.assigned_to === p.id && d.stage === 'closed_won')
+        const won = deals.filter((d) => d.assigned_to === p.id && d.stage === 'closed' && d.outcome === 'Won')
         return {
           ...p,
           closedCount: won.length,
-          closedValue: won.reduce((s, d) => s + (Number(d.value) || 0), 0),
+          closedValue: won.reduce((s, d) => s + (Number(d.estimated_arr) || 0), 0),
         }
       })
       .sort((a, b) => b.closedValue - a.closedValue)

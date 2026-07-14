@@ -1,27 +1,37 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Modal from '../ui/Modal'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { SOURCES } from '../../lib/constants'
+import { ICP_CATEGORIES, ICP_CATEGORY_LABELS } from '../../lib/constants'
 import { sanitize } from '../../lib/format'
 
 const inputCls =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
 
-export default function ContactModal({ contact, onClose, onSaved }) {
+export default function ContactModal({ contact, initialCompanyId = '', onClose, onSaved }) {
   const { user } = useAuth()
   const isEdit = Boolean(contact)
+  const [companies, setCompanies] = useState([])
   const [form, setForm] = useState({
     full_name: contact?.full_name ?? '',
-    company: contact?.company ?? '',
+    company_id: contact?.company_id ?? initialCompanyId ?? '',
     email: contact?.email ?? '',
     phone: contact?.phone ?? '',
     title: contact?.title ?? '',
-    source: contact?.source ?? 'outbound',
+    linkedin: contact?.linkedin ?? '',
+    icp_category: contact?.icp_category ?? '',
     notes: contact?.notes ?? '',
   })
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('companies')
+      .select('id, name')
+      .order('name')
+      .then(({ data }) => setCompanies(data ?? []))
+  }, [])
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
 
@@ -32,11 +42,12 @@ export default function ContactModal({ contact, onClose, onSaved }) {
 
     const payload = {
       full_name: sanitize(form.full_name, 200),
-      company: sanitize(form.company, 200) || null,
+      company_id: form.company_id || null,
       email: sanitize(form.email, 254).toLowerCase() || null,
       phone: sanitize(form.phone, 50) || null,
       title: sanitize(form.title, 200) || null,
-      source: SOURCES.includes(form.source) ? form.source : 'outbound',
+      linkedin: sanitize(form.linkedin, 300) || null,
+      icp_category: ICP_CATEGORIES.includes(form.icp_category) ? form.icp_category : null,
       notes: sanitize(form.notes, 5000) || null,
     }
 
@@ -71,7 +82,14 @@ export default function ContactModal({ contact, onClose, onSaved }) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Company</label>
-            <input value={form.company} onChange={set('company')} className={inputCls} />
+            <select value={form.company_id} onChange={set('company_id')} className={inputCls}>
+              <option value="">— None —</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Title</label>
@@ -88,15 +106,22 @@ export default function ContactModal({ contact, onClose, onSaved }) {
             <input value={form.phone} onChange={set('phone')} className={inputCls} />
           </div>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">Source</label>
-          <select value={form.source} onChange={set('source')} className={inputCls}>
-            {SOURCES.map((s) => (
-              <option key={s} value={s}>
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-              </option>
-            ))}
-          </select>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">LinkedIn</label>
+            <input value={form.linkedin} onChange={set('linkedin')} placeholder="https://linkedin.com/in/…" className={inputCls} />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">ICP Category</label>
+            <select value={form.icp_category} onChange={set('icp_category')} className={inputCls}>
+              <option value="">— None —</option>
+              {ICP_CATEGORIES.map((i) => (
+                <option key={i} value={i}>
+                  {ICP_CATEGORY_LABELS[i]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>

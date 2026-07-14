@@ -4,6 +4,9 @@ import AppLayout from './components/layout/AppLayout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Contacts from './pages/Contacts'
+import ContactDetail from './pages/ContactDetail'
+import Companies from './pages/Companies'
+import CompanyDetail from './pages/CompanyDetail'
 import Pipeline from './pages/Pipeline'
 import Tasks from './pages/Tasks'
 import DealDetail from './pages/DealDetail'
@@ -22,6 +25,9 @@ export default function App() {
       >
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/contacts" element={<Contacts />} />
+        <Route path="/contacts/:id" element={<ContactDetail />} />
+        <Route path="/companies" element={<Companies />} />
+        <Route path="/companies/:id" element={<CompanyDetail />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/deals/:id" element={<DealDetail />} />

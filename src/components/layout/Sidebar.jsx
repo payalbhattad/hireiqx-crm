@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Users,
+  Building2,
   KanbanSquare,
   CheckSquare,
   Settings,
@@ -14,6 +15,7 @@ import { initials } from '../../lib/format'
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/contacts', label: 'Contacts', icon: Users },
+  { to: '/companies', label: 'Companies', icon: Building2 },
   { to: '/pipeline', label: 'Pipeline', icon: KanbanSquare },
   { to: '/tasks', label: 'Tasks', icon: CheckSquare },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
