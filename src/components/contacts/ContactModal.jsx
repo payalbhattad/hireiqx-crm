@@ -12,6 +12,7 @@ export default function ContactModal({ contact, initialCompanyId = '', onClose, 
   const { user } = useAuth()
   const isEdit = Boolean(contact)
   const [companies, setCompanies] = useState([])
+  const [profiles, setProfiles] = useState([])
   const [form, setForm] = useState({
     full_name: contact?.full_name ?? '',
     company_id: contact?.company_id ?? initialCompanyId ?? '',
@@ -20,6 +21,7 @@ export default function ContactModal({ contact, initialCompanyId = '', onClose, 
     title: contact?.title ?? '',
     linkedin: contact?.linkedin ?? '',
     icp_category: contact?.icp_category ?? '',
+    assigned_to: contact?.assigned_to ?? '',
     notes: contact?.notes ?? '',
   })
   const [error, setError] = useState('')
@@ -31,6 +33,11 @@ export default function ContactModal({ contact, initialCompanyId = '', onClose, 
       .select('id, name')
       .order('name')
       .then(({ data }) => setCompanies(data ?? []))
+    supabase
+      .from('profiles')
+      .select('id, full_name, email')
+      .order('full_name')
+      .then(({ data }) => setProfiles(data ?? []))
   }, [])
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
@@ -48,6 +55,7 @@ export default function ContactModal({ contact, initialCompanyId = '', onClose, 
       title: sanitize(form.title, 200) || null,
       linkedin: sanitize(form.linkedin, 300) || null,
       icp_category: ICP_CATEGORIES.includes(form.icp_category) ? form.icp_category : null,
+      assigned_to: form.assigned_to || null,
       notes: sanitize(form.notes, 5000) || null,
     }
 
@@ -122,6 +130,17 @@ export default function ContactModal({ contact, initialCompanyId = '', onClose, 
               ))}
             </select>
           </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Assigned To</label>
+          <select value={form.assigned_to} onChange={set('assigned_to')} className={inputCls}>
+            <option value="">— Unassigned —</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.full_name || p.email}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>

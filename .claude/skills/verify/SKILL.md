@@ -91,6 +91,42 @@ There is no local/mock backend — verification means hitting the live project.
   title). Clean up test data at the *start* of a run too, not just the end — you can't
   always rely on the previous run's cleanup having completed.
 
+- **These check constraints have all drifted from the repo's migration files at least
+  once — always confirm against the live DB before trusting `constants.js`:**
+  - `companies.status`: `New`, `Active`, `Lead`, `Channel / Referral` (confirmed —
+    note the spaces around the `/`, `Channel/Referral` with no spaces fails).
+  - `contacts.icp_category`: `Owner / Executive`, `Recruiting Manager`, `Sales
+    Manager`, `Recruiter`, `Account Manager`, `Administrator` (confirmed — same
+    spaced-slash gotcha on the first one).
+  - `companies.industry`: only 16 of a reported "22 sectors" are confirmed —
+    `Construction`, `Education`, `Engineering`, `Government`, `Healthcare`,
+    `Hospitality`, `Insurance`, `Legal`, `Manufacturing`, `Logistics`, `Information
+    Technology`, `Finance & Accounting`, `Professional Services`, `Sales &
+    Marketing`, `Energy & Utilities`, `Retail & Consumer`. ~150 other candidate
+    sector names were probed and rejected. The other ~6 are still unknown — this is
+    a real gap, not something to keep guessing at during a verify pass.
+  - If any of these constraints get altered again, re-probe with the service-role
+    client (insert candidate value, check for `violates check constraint`, delete
+    immediately) rather than trusting what's in `constants.js` or the migration
+    files — this has now happened repeatedly across sessions.
+- **InlineEditCell's edit trigger is the pencil icon, not the whole cell.** Cells whose
+  `displayValue` contains a `<Link>` (company/contact names linking to their detail
+  pages) can't have the *whole* cell open edit mode — the Link needs its own click to
+  navigate, and stealing that click either breaks navigation or double-fires both
+  behaviors. So: `cell.hover()` then `cell.locator('button[title="Edit"]').click({
+  force: true })` — `force: true` because the pencil is `opacity-0` until
+  `group-hover`, and Playwright's actionability check otherwise refuses to click a
+  0-opacity element.
+- **`select`-type InlineEditCell fields save on `onChange`, not blur** — `.selectOption()`
+  alone is enough, no need to blur/Enter afterward. Text/number/date types save on
+  blur or Enter; Escape cancels and reverts to the last-saved value (verified: editing,
+  pressing Escape, then re-reading the cell shows the *previous* save, not the
+  escaped-away draft and not the pre-previous value either).
+- When testing a sortable `<th>`, remember the **default sort direction is already
+  applied on load** — e.g. Companies defaults to `{ key: 'name', dir: 'asc' }`, so the
+  *first* click on the Name header flips to `desc`, not `asc`. Don't assert "first
+  click == ascending" without checking what the page's initial sort state was.
+
 ## Useful smoke flow
 
 Login → Companies (add) → open detail → Add Contact (confirms `initialCompanyId`

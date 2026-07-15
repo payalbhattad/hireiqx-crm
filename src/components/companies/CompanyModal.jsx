@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Modal from '../ui/Modal'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -11,6 +11,7 @@ const inputCls =
 export default function CompanyModal({ company, onClose, onSaved }) {
   const { user } = useAuth()
   const isEdit = Boolean(company)
+  const [profiles, setProfiles] = useState([])
   const [form, setForm] = useState({
     name: company?.name ?? '',
     domain: company?.domain ?? '',
@@ -21,10 +22,20 @@ export default function CompanyModal({ company, onClose, onSaved }) {
     phone: company?.phone ?? '',
     address: company?.address ?? '',
     linkedin: company?.linkedin ?? '',
+    assigned_rep: company?.assigned_rep ?? '',
+    annual_revenue: company?.annual_revenue ?? '',
     notes: company?.notes ?? '',
   })
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('profiles')
+      .select('id, full_name, email')
+      .order('full_name')
+      .then(({ data }) => setProfiles(data ?? []))
+  }, [])
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
 
@@ -43,6 +54,8 @@ export default function CompanyModal({ company, onClose, onSaved }) {
       phone: sanitize(form.phone, 50) || null,
       address: sanitize(form.address, 300) || null,
       linkedin: sanitize(form.linkedin, 300) || null,
+      assigned_rep: form.assigned_rep || null,
+      annual_revenue: form.annual_revenue === '' ? null : Number(form.annual_revenue),
       notes: sanitize(form.notes, 5000) || null,
     }
 
@@ -125,6 +138,23 @@ export default function CompanyModal({ company, onClose, onSaved }) {
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">LinkedIn</label>
           <input value={form.linkedin} onChange={set('linkedin')} placeholder="https://linkedin.com/company/acme" className={inputCls} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Assigned Rep</label>
+            <select value={form.assigned_rep} onChange={set('assigned_rep')} className={inputCls}>
+              <option value="">— Unassigned —</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.full_name || p.email}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Annual Revenue ($)</label>
+            <input type="number" min="0" step="any" value={form.annual_revenue} onChange={set('annual_revenue')} className={inputCls} />
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Address</label>

@@ -24,6 +24,7 @@ import {
 import { formatCurrency, formatDate, formatDateTime, initials, sanitize, todayISO } from '../lib/format'
 import Modal from '../components/ui/Modal'
 import CompanySearchSelect from '../components/ui/CompanySearchSelect'
+import InlineEditCell from '../components/ui/InlineEditCell'
 
 const inputCls =
   'rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
@@ -179,14 +180,19 @@ export default function DealDetail() {
   }, [load])
 
   const updateDeal = async (patch) => {
+    const prev = deal
     setDeal((d) => ({ ...d, ...patch }))
-    await supabase.from('deals').update(patch).eq('id', id)
+    const { error } = await supabase.from('deals').update(patch).eq('id', id)
+    if (error) {
+      setDeal(prev)
+      throw error
+    }
     if (['assigned_to', 'contact_id', 'num_seats', 'arr_override'].some((k) => k in patch)) load()
   }
 
   const handleTitleBlur = () => {
     const clean = sanitize(title, 200)
-    if (clean && clean !== deal.title) updateDeal({ title: clean })
+    if (clean && clean !== deal.title) updateDeal({ title: clean }).catch(() => {})
     else setTitle(deal.title)
   }
 
@@ -198,7 +204,7 @@ export default function DealDetail() {
   const handleCompanySelect = (company) => {
     setCompanyId(company?.id ?? '')
     if ((deal?.contact?.company_id ?? '') !== (company?.id ?? '')) {
-      updateDeal({ contact_id: null })
+      updateDeal({ contact_id: null }).catch(() => {})
     }
   }
 
@@ -360,7 +366,7 @@ export default function DealDetail() {
             <p className="text-xs font-medium uppercase text-slate-500">Contact</p>
             <select
               value={deal.contact_id ?? ''}
-              onChange={(e) => updateDeal({ contact_id: e.target.value || null })}
+              onChange={(e) => updateDeal({ contact_id: e.target.value || null }).catch(() => {})}
               disabled={!companyId}
               className={`mt-1 w-44 ${inputCls}`}
             >
@@ -375,33 +381,22 @@ export default function DealDetail() {
 
           {showSeatsAndArr && (
             <>
-              <div>
+              <div className="w-28">
                 <p className="text-xs font-medium uppercase text-slate-500">Number of Seats</p>
-                <input
-                  key={`seats-${deal.updated_at}`}
+                <InlineEditCell
+                  value={deal.num_seats ?? ''}
                   type="number"
-                  min="0"
-                  step="1"
-                  defaultValue={deal.num_seats ?? ''}
-                  onBlur={(e) => updateDeal({ num_seats: e.target.value === '' ? null : Number(e.target.value) })}
-                  className={`mt-1 w-28 ${inputCls}`}
+                  onSave={(v) => updateDeal({ num_seats: v === '' ? null : Number(v) })}
+                  displayValue={deal.num_seats ?? '—'}
                 />
               </div>
-              <div>
+              <div className="w-32">
                 <p className="text-xs font-medium uppercase text-slate-500">Estimated ARR</p>
-                <input
-                  key={`arr-${deal.updated_at}`}
+                <InlineEditCell
+                  value={deal.estimated_arr ?? ''}
                   type="number"
-                  min="0"
-                  step="any"
-                  defaultValue={deal.estimated_arr ?? ''}
-                  onBlur={(e) =>
-                    updateDeal({
-                      estimated_arr: e.target.value === '' ? null : Number(e.target.value),
-                      arr_override: true,
-                    })
-                  }
-                  className={`mt-1 w-32 ${inputCls}`}
+                  onSave={(v) => updateDeal({ estimated_arr: v === '' ? null : Number(v), arr_override: true })}
+                  displayValue={formatCurrency(deal.estimated_arr)}
                 />
                 <p className="mt-1 text-xs text-slate-400">
                   {deal.arr_override
@@ -415,39 +410,34 @@ export default function DealDetail() {
           {deal.stage === 'demo_scheduled' && (
             <div>
               <p className="text-xs font-medium uppercase text-slate-500">Demo Date</p>
-              <input
-                type="date"
+              <InlineEditCell
                 value={deal.demo_date ?? ''}
-                onChange={(e) => updateDeal({ demo_date: e.target.value || null })}
-                className={`mt-1 ${inputCls}`}
+                type="date"
+                onSave={(v) => updateDeal({ demo_date: v || null })}
+                displayValue={deal.demo_date ? formatDate(deal.demo_date) : '—'}
               />
             </div>
           )}
 
-          <div>
+          <div className="w-44">
             <p className="text-xs font-medium uppercase text-slate-500">Assigned To</p>
-            <select
+            <InlineEditCell
               value={deal.assigned_to ?? ''}
-              onChange={(e) => updateDeal({ assigned_to: e.target.value || null })}
-              className={`mt-1 ${inputCls}`}
-            >
-              <option value="">— Unassigned —</option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.full_name || p.email}
-                </option>
-              ))}
-            </select>
+              type="select"
+              options={[{ value: '', label: '— Unassigned —' }, ...profiles.map((p) => ({ value: p.id, label: p.full_name || p.email }))]}
+              onSave={(v) => updateDeal({ assigned_to: v || null })}
+              displayValue={profiles.find((p) => p.id === deal.assigned_to)?.full_name || profiles.find((p) => p.id === deal.assigned_to)?.email || '— Unassigned —'}
+            />
           </div>
 
           {deal.stage !== 'closed' && (
             <div>
               <p className="text-xs font-medium uppercase text-slate-500">Expected Close</p>
-              <input
-                type="date"
+              <InlineEditCell
                 value={deal.expected_close_date ?? ''}
-                onChange={(e) => updateDeal({ expected_close_date: e.target.value || null })}
-                className={`mt-1 ${inputCls}`}
+                type="date"
+                onSave={(v) => updateDeal({ expected_close_date: v || null })}
+                displayValue={deal.expected_close_date ? formatDate(deal.expected_close_date) : '—'}
               />
             </div>
           )}
@@ -456,7 +446,7 @@ export default function DealDetail() {
             <p className="text-xs font-medium uppercase text-slate-500">Stage</p>
             <select
               value={deal.stage}
-              onChange={(e) => updateDeal({ stage: e.target.value })}
+              onChange={(e) => updateDeal({ stage: e.target.value }).catch(() => {})}
               className={`mt-1 ${inputCls} ${STAGE_COLORS[deal.stage].badge}`}
             >
               {STAGES.map((s) => (
@@ -468,65 +458,50 @@ export default function DealDetail() {
           </div>
 
           {deal.stage === 'decision_pending' && (
-            <div>
+            <div className="w-40">
               <p className="text-xs font-medium uppercase text-slate-500">Decision Criteria</p>
-              <select
+              <InlineEditCell
                 value={deal.decision_criteria ?? ''}
-                onChange={(e) => updateDeal({ decision_criteria: e.target.value || null })}
-                className={`mt-1 ${inputCls}`}
-              >
-                <option value="">— None —</option>
-                {DEAL_REASON_OPTIONS.map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
+                type="select"
+                options={[{ value: '', label: '— None —' }, ...DEAL_REASON_OPTIONS.map((o) => ({ value: o, label: o }))]}
+                onSave={(v) => updateDeal({ decision_criteria: v || null })}
+                displayValue={deal.decision_criteria ?? '—'}
+              />
             </div>
           )}
 
           {deal.stage === 'closed' && (
-            <div>
+            <div className="w-32">
               <p className="text-xs font-medium uppercase text-slate-500">Outcome</p>
-              <select
+              <InlineEditCell
                 value={deal.outcome ?? ''}
-                onChange={(e) => handleOutcomeChange(e.target.value)}
-                className={`mt-1 ${inputCls}`}
-              >
-                <option value="">— None —</option>
-                {OUTCOMES.map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
+                type="select"
+                options={[{ value: '', label: '— None —' }, ...OUTCOMES.map((o) => ({ value: o, label: o }))]}
+                onSave={handleOutcomeChange}
+                displayValue={deal.outcome ?? '—'}
+              />
             </div>
           )}
 
           {deal.stage === 'closed' && deal.outcome === 'Lost' && (
             <>
-              <div>
+              <div className="w-40">
                 <p className="text-xs font-medium uppercase text-slate-500">Lost Reason</p>
-                <select
+                <InlineEditCell
                   value={deal.lost_reason ?? ''}
-                  onChange={(e) => updateDeal({ lost_reason: e.target.value || null })}
-                  className={`mt-1 ${inputCls}`}
-                >
-                  <option value="">— None —</option>
-                  {DEAL_REASON_OPTIONS.map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
+                  type="select"
+                  options={[{ value: '', label: '— None —' }, ...DEAL_REASON_OPTIONS.map((o) => ({ value: o, label: o }))]}
+                  onSave={(v) => updateDeal({ lost_reason: v || null })}
+                  displayValue={deal.lost_reason ?? '—'}
+                />
               </div>
               <div>
                 <p className="text-xs font-medium uppercase text-slate-500">Follow-Up Date</p>
-                <input
-                  type="date"
+                <InlineEditCell
                   value={deal.followup_date ?? ''}
-                  onChange={(e) => updateDeal({ followup_date: e.target.value || null })}
-                  className={`mt-1 ${inputCls}`}
+                  type="date"
+                  onSave={(v) => updateDeal({ followup_date: v || null })}
+                  displayValue={deal.followup_date ? formatDate(deal.followup_date) : '—'}
                 />
               </div>
             </>
@@ -534,22 +509,21 @@ export default function DealDetail() {
 
           {deal.stage === 'closed' && deal.outcome === 'Won' && (
             <>
-              <div>
+              <div className="w-40">
                 <p className="text-xs font-medium uppercase text-slate-500">Plan Selected</p>
-                <input
-                  key={`plan-${deal.updated_at}`}
-                  defaultValue={deal.plan_selected ?? ''}
-                  onBlur={(e) => updateDeal({ plan_selected: sanitize(e.target.value, 200) || null })}
-                  className={`mt-1 w-40 ${inputCls}`}
+                <InlineEditCell
+                  value={deal.plan_selected ?? ''}
+                  onSave={(v) => updateDeal({ plan_selected: sanitize(v, 200) || null })}
+                  displayValue={deal.plan_selected ?? '—'}
                 />
               </div>
               <div>
                 <p className="text-xs font-medium uppercase text-slate-500">Kickoff Date</p>
-                <input
-                  type="date"
+                <InlineEditCell
                   value={deal.kickoff_date ?? ''}
-                  onChange={(e) => updateDeal({ kickoff_date: e.target.value || null })}
-                  className={`mt-1 ${inputCls}`}
+                  type="date"
+                  onSave={(v) => updateDeal({ kickoff_date: v || null })}
+                  displayValue={deal.kickoff_date ? formatDate(deal.kickoff_date) : '—'}
                 />
               </div>
             </>

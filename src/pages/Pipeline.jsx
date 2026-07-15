@@ -9,18 +9,19 @@ import {
   useDraggable,
   useDroppable,
 } from '@dnd-kit/core'
-import { Plus, Calendar } from 'lucide-react'
+import { Plus, Calendar, Search, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { STAGES, STAGE_COLORS, STAGE_LABELS, OUTCOME_COLORS } from '../lib/constants'
 import { formatCurrency, formatDate, initials, sanitize } from '../lib/format'
 import Modal from '../components/ui/Modal'
 import CompanySearchSelect from '../components/ui/CompanySearchSelect'
+import InlineEditCell from '../components/ui/InlineEditCell'
 
 const inputCls =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
 
-function DealCard({ deal, onStageChange, overlay = false }) {
+function DealCard({ deal, onStageChange, onSeatsChange, overlay = false }) {
   const navigate = useNavigate()
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: deal.id,
@@ -72,7 +73,19 @@ function DealCard({ deal, onStageChange, overlay = false }) {
       )}
 
       <div className="mb-2 flex items-center justify-between">
-        {deal.num_seats != null && <span className="text-xs text-slate-500">{deal.num_seats} seats</span>}
+        {overlay ? (
+          <span className="text-xs text-slate-500">{deal.num_seats != null ? `${deal.num_seats} seats` : ''}</span>
+        ) : (
+          <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} className="w-20">
+            <InlineEditCell
+              value={deal.num_seats ?? ''}
+              type="number"
+              onSave={(v) => onSeatsChange(deal, v === '' ? null : Number(v))}
+              displayValue={deal.num_seats != null ? `${deal.num_seats} seats` : '— seats'}
+              className="text-xs text-slate-500"
+            />
+          </div>
+        )}
         <span className="text-sm font-semibold text-indigo-600">{formatCurrency(deal.estimated_arr)}</span>
       </div>
 
@@ -111,7 +124,7 @@ function DealCard({ deal, onStageChange, overlay = false }) {
   )
 }
 
-function StageColumn({ stage, deals, onAdd, onStageChange }) {
+function StageColumn({ stage, deals, onAdd, onStageChange, onSeatsChange }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id })
   const total = deals.reduce((sum, d) => sum + (Number(d.estimated_arr) || 0), 0)
 
@@ -134,7 +147,7 @@ function StageColumn({ stage, deals, onAdd, onStageChange }) {
         }`}
       >
         {deals.map((deal) => (
-          <DealCard key={deal.id} deal={deal} onStageChange={onStageChange} />
+          <DealCard key={deal.id} deal={deal} onStageChange={onStageChange} onSeatsChange={onSeatsChange} />
         ))}
         <button
           onClick={() => onAdd(stage.id)}
@@ -267,6 +280,9 @@ export default function Pipeline() {
   const [loading, setLoading] = useState(true)
   const [addingToStage, setAddingToStage] = useState(null)
   const [activeDeal, setActiveDeal] = useState(null)
+  const [search, setSearch] = useState('')
+  const [repFilter, setRepFilter] = useState('all')
+  const [stageFilter, setStageFilter] = useState('all')
 
   const sensors = useSensors(
     // 8px activation distance keeps plain clicks working as navigation.
@@ -290,11 +306,30 @@ export default function Pipeline() {
     load()
   }, [load])
 
+  const hasFilters = Boolean(search || repFilter !== 'all' || stageFilter !== 'all')
+  const clearFilters = () => {
+    setSearch('')
+    setRepFilter('all')
+    setStageFilter('all')
+  }
+
+  const filteredDeals = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return deals.filter((d) => {
+      if (repFilter !== 'all' && d.assigned_to !== repFilter) return false
+      if (stageFilter !== 'all' && d.stage !== stageFilter) return false
+      if (!q) return true
+      return [d.title, d.contact?.full_name, d.contact?.company?.name].some((v) => v?.toLowerCase().includes(q))
+    })
+  }, [deals, search, repFilter, stageFilter])
+
   const byStage = useMemo(() => {
+    // Every stage column always renders, even filtered down to zero deals —
+    // filtering narrows within columns, it never collapses them.
     const map = Object.fromEntries(STAGES.map((s) => [s.id, []]))
-    for (const d of deals) map[d.stage]?.push(d)
+    for (const d of filteredDeals) map[d.stage]?.push(d)
     return map
-  }, [deals])
+  }, [filteredDeals])
 
   const moveStage = useCallback(async (deal, targetStage) => {
     if (!targetStage || deal.stage === targetStage) return
@@ -303,6 +338,18 @@ export default function Pipeline() {
     if (error) {
       setDeals((ds) => ds.map((d) => (d.id === deal.id ? { ...d, stage: deal.stage } : d)))
     }
+  }, [])
+
+  const changeSeats = useCallback(async (deal, numSeats) => {
+    const { error } = await supabase.from('deals').update({ num_seats: numSeats }).eq('id', deal.id)
+    if (error) throw error
+    setDeals((ds) =>
+      ds.map((d) =>
+        d.id === deal.id
+          ? { ...d, num_seats: numSeats, estimated_arr: d.arr_override ? d.estimated_arr : (numSeats || 0) * 500 }
+          : d,
+      ),
+    )
   }, [])
 
   const handleDragEnd = ({ active, over }) => {
@@ -320,6 +367,52 @@ export default function Pipeline() {
   return (
     <div className="flex h-full flex-col p-8">
       <h1 className="mb-6 text-2xl font-bold text-slate-900">Pipeline</h1>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative max-w-md flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by deal, company, or contact…"
+            className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+        <select
+          value={repFilter}
+          onChange={(e) => setRepFilter(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">All reps</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.full_name || p.email}
+            </option>
+          ))}
+        </select>
+        <select
+          value={stageFilter}
+          onChange={(e) => setStageFilter(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">All stages</option>
+          {STAGES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            className="flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-indigo-600"
+          >
+            <X className="h-3.5 w-3.5" />
+            Clear Filters
+          </button>
+        )}
+      </div>
+
       {loading ? (
         <p className="text-sm text-slate-500">Loading pipeline…</p>
       ) : (
@@ -337,6 +430,7 @@ export default function Pipeline() {
                 deals={byStage[stage.id]}
                 onAdd={setAddingToStage}
                 onStageChange={moveStage}
+                onSeatsChange={changeSeats}
               />
             ))}
           </div>

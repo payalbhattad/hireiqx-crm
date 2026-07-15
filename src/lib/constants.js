@@ -29,60 +29,63 @@ export const OUTCOME_COLORS = {
 
 export const ACTIVITY_TYPES = ['call', 'email', 'note', 'meeting']
 
+// NOTE: the live `companies_industry_check` constraint only accepts these 16
+// values — a further ~150 candidate sector names (incl. "22 sectors" worth of
+// guesses from the PRD-style list) were probed against the DB and rejected.
+// The remaining ~6 sectors from the PRD are still unknown; add them here once
+// confirmed against the live constraint.
 export const INDUSTRIES = [
-  'technology',
-  'healthcare',
-  'finance',
-  'education',
-  'retail',
-  'manufacturing',
-  'real_estate',
-  'staffing',
-  'other',
+  'Construction',
+  'Education',
+  'Engineering',
+  'Government',
+  'Healthcare',
+  'Hospitality',
+  'Insurance',
+  'Legal',
+  'Manufacturing',
+  'Logistics',
+  'Information Technology',
+  'Finance & Accounting',
+  'Professional Services',
+  'Sales & Marketing',
+  'Energy & Utilities',
+  'Retail & Consumer',
 ]
 
-export const INDUSTRY_LABELS = {
-  technology: 'Technology',
-  healthcare: 'Healthcare',
-  finance: 'Finance',
-  education: 'Education',
-  retail: 'Retail',
-  manufacturing: 'Manufacturing',
-  real_estate: 'Real Estate',
-  staffing: 'Staffing',
-  other: 'Other',
-}
+export const INDUSTRY_LABELS = Object.fromEntries(INDUSTRIES.map((i) => [i, i]))
 
-export const COMPANY_STATUSES = ['New', 'Active', 'Lead']
+export const COMPANY_STATUSES = ['New', 'Active', 'Lead', 'Channel / Referral']
 
-export const COMPANY_STATUS_LABELS = {
-  New: 'New',
-  Active: 'Active',
-  Lead: 'Lead',
-}
+export const COMPANY_STATUS_LABELS = Object.fromEntries(COMPANY_STATUSES.map((s) => [s, s]))
 
 export const COMPANY_STATUS_COLORS = {
   New: 'bg-slate-100 text-slate-700',
   Active: 'bg-blue-100 text-blue-700',
   Lead: 'bg-purple-100 text-purple-700',
+  'Channel / Referral': 'bg-amber-100 text-amber-700',
 }
 
 export const COMPANY_SIZES = ['1-10', '11-50', '51-200', '201-500', '501-1000', '1000+']
 
-export const ICP_CATEGORIES = ['tier_1', 'tier_2', 'tier_3', 'not_icp']
+export const ICP_CATEGORIES = [
+  'Owner / Executive',
+  'Recruiting Manager',
+  'Sales Manager',
+  'Recruiter',
+  'Account Manager',
+  'Administrator',
+]
 
-export const ICP_CATEGORY_LABELS = {
-  tier_1: 'Tier 1',
-  tier_2: 'Tier 2',
-  tier_3: 'Tier 3',
-  not_icp: 'Not ICP',
-}
+export const ICP_CATEGORY_LABELS = Object.fromEntries(ICP_CATEGORIES.map((i) => [i, i]))
 
 export const ICP_CATEGORY_COLORS = {
-  tier_1: 'bg-green-100 text-green-700',
-  tier_2: 'bg-blue-100 text-blue-700',
-  tier_3: 'bg-yellow-100 text-yellow-700',
-  not_icp: 'bg-slate-100 text-slate-600',
+  'Owner / Executive': 'bg-purple-100 text-purple-700',
+  'Recruiting Manager': 'bg-blue-100 text-blue-700',
+  'Sales Manager': 'bg-green-100 text-green-700',
+  Recruiter: 'bg-yellow-100 text-yellow-700',
+  'Account Manager': 'bg-indigo-100 text-indigo-700',
+  Administrator: 'bg-slate-100 text-slate-600',
 }
 
 export const TASK_TYPES = ['Call', 'Email', 'Text', 'Social Media']
