@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, X } from 'lucide-react'
+import { Plus, Upload, Search, Pencil, Trash2, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import {
   INDUSTRIES,
@@ -11,6 +11,7 @@ import {
 } from '../lib/constants'
 import { formatCurrency, formatDate, sanitize } from '../lib/format'
 import CompanyModal from '../components/companies/CompanyModal'
+import CompanyImportModal from '../components/companies/CompanyImportModal'
 import InlineEditCell from '../components/ui/InlineEditCell'
 import SortableHeader from '../components/ui/SortableHeader'
 
@@ -24,6 +25,7 @@ export default function Companies() {
   const [repFilter, setRepFilter] = useState('all')
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' })
   const [editing, setEditing] = useState(null) // null | 'new' | company object
+  const [showImport, setShowImport] = useState(false)
   const [notice, setNotice] = useState('')
 
   const load = useCallback(async () => {
@@ -119,13 +121,22 @@ export default function Companies() {
     <div className="p-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900">Companies</h1>
-        <button
-          onClick={() => setEditing('new')}
-          className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          <Plus className="h-4 w-4" />
-          Add Company
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Upload className="h-4 w-4" />
+            Import
+          </button>
+          <button
+            onClick={() => setEditing('new')}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4" />
+            Add Company
+          </button>
+        </div>
       </div>
 
       {notice && (
@@ -300,6 +311,15 @@ export default function Companies() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
+            load()
+          }}
+        />
+      )}
+      {showImport && (
+        <CompanyImportModal
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            setShowImport(false)
             load()
           }}
         />

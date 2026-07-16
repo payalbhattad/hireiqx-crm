@@ -12,7 +12,7 @@ import {
 import { Plus, Calendar, Search, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { STAGES, STAGE_COLORS, STAGE_LABELS, OUTCOME_COLORS } from '../lib/constants'
+import { STAGES, STAGE_COLORS, STAGE_LABELS, OUTCOME_COLORS, DEAL_REASON_OPTIONS, OUTCOMES } from '../lib/constants'
 import { formatCurrency, formatDate, initials, sanitize } from '../lib/format'
 import Modal from '../components/ui/Modal'
 import CompanySearchSelect from '../components/ui/CompanySearchSelect'
@@ -161,16 +161,27 @@ function StageColumn({ stage, deals, onAdd, onStageChange, onSeatsChange }) {
   )
 }
 
-function AddDealModal({ stage, profiles, onClose, onSaved }) {
+function AddDealModal({ stage: initialStage, profiles, onClose, onSaved }) {
   const { user } = useAuth()
+  const [stage, setStage] = useState(initialStage)
   const [companyId, setCompanyId] = useState('')
+  const [companyName, setCompanyName] = useState('')
   const [contacts, setContacts] = useState([])
+  const [arrOverride, setArrOverride] = useState(false)
   const [form, setForm] = useState({
-    title: '',
     contact_id: '',
     num_seats: '',
+    estimated_arr: '',
     assigned_to: user.id,
     expected_close_date: '',
+    demo_date: '',
+    decision_criteria: '',
+    outcome: '',
+    plan_selected: '',
+    kickoff_date: '',
+    lost_reason: '',
+    followup_date: '',
+    notes: '',
   })
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -192,37 +203,90 @@ function AddDealModal({ stage, profiles, onClose, onSaved }) {
 
   const handleCompanySelect = (company) => {
     setCompanyId(company?.id ?? '')
+    setCompanyName(company?.name ?? '')
     setForm((f) => ({ ...f, contact_id: contacts.find((c) => c.id === f.contact_id)?.company_id === company?.id ? f.contact_id : '' }))
+  }
+
+  const handleSeatsChange = (e) => {
+    const v = e.target.value
+    setForm((f) => ({
+      ...f,
+      num_seats: v,
+      estimated_arr: arrOverride ? f.estimated_arr : v === '' ? '' : String(Number(v) * 500),
+    }))
+  }
+
+  const handleArrChange = (e) => {
+    setArrOverride(true)
+    setForm((f) => ({ ...f, estimated_arr: e.target.value }))
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
     setError('')
-    const { error: dbError } = await supabase.from('deals').insert({
-      title: sanitize(form.title, 200),
+
+    const contactName = contacts.find((c) => c.id === form.contact_id)?.full_name
+    const title = sanitize([companyName, contactName].filter(Boolean).join(' — ') || 'Untitled Deal', 200)
+
+    const payload = {
+      title,
       contact_id: form.contact_id || null,
-      num_seats: form.num_seats === '' ? null : Number(form.num_seats),
       assigned_to: form.assigned_to || null,
-      expected_close_date: form.expected_close_date || null,
       stage,
-    })
+    }
+
+    if (stage !== 'closed') {
+      payload.num_seats = form.num_seats === '' ? null : Number(form.num_seats)
+      payload.estimated_arr = form.estimated_arr === '' ? null : Number(form.estimated_arr)
+      payload.arr_override = arrOverride
+      payload.expected_close_date = form.expected_close_date || null
+    }
+    if (stage === 'demo_scheduled') {
+      payload.demo_date = form.demo_date || null
+    }
+    if (stage === 'decision_pending') {
+      payload.decision_criteria = form.decision_criteria || null
+    }
+    if (stage === 'closed') {
+      payload.outcome = form.outcome || null
+      if (form.outcome === 'Won') {
+        payload.num_seats = form.num_seats === '' ? null : Number(form.num_seats)
+        payload.estimated_arr = form.estimated_arr === '' ? null : Number(form.estimated_arr)
+        payload.arr_override = true
+        payload.plan_selected = sanitize(form.plan_selected, 200) || null
+        payload.kickoff_date = form.kickoff_date || null
+      } else if (form.outcome === 'Lost') {
+        payload.lost_reason = form.lost_reason || null
+        payload.followup_date = form.followup_date || null
+      }
+    }
+
+    const { data: newDeal, error: dbError } = await supabase.from('deals').insert(payload).select('id').single()
     if (dbError) {
       setError(dbError.message)
       setSaving(false)
       return
     }
+
+    const noteBody = sanitize(form.notes, 5000)
+    if (noteBody) {
+      await supabase.from('notes').insert({
+        body: noteBody,
+        deal_id: newDeal.id,
+        contact_id: form.contact_id || null,
+        created_by: user.id,
+      })
+    }
+
     onSaved()
   }
+
+  const showSeatsAndArr = stage !== 'closed' || form.outcome === 'Won'
 
   return (
     <Modal title={`Add Deal — ${STAGE_LABELS[stage]}`} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">Title *</label>
-          <input required value={form.title} onChange={set('title')} className={inputCls} />
-        </div>
-
         <CompanySearchSelect value={companyId} onSelect={handleCompanySelect} />
 
         <div>
@@ -237,16 +301,20 @@ function AddDealModal({ stage, profiles, onClose, onSaved }) {
           </select>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Number of Seats</label>
-            <input type="number" min="0" step="1" value={form.num_seats} onChange={set('num_seats')} className={inputCls} />
+        {showSeatsAndArr && (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Number of Seats</label>
+              <input type="number" min="0" step="1" value={form.num_seats} onChange={handleSeatsChange} className={inputCls} />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Estimated ARR {!arrOverride && <span className="font-normal text-slate-400">(Auto-calculated)</span>}
+              </label>
+              <input type="number" min="0" step="1" value={form.estimated_arr} onChange={handleArrChange} className={inputCls} />
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Expected Close</label>
-            <input type="date" value={form.expected_close_date} onChange={set('expected_close_date')} className={inputCls} />
-          </div>
-        </div>
+        )}
 
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Assigned To</label>
@@ -257,6 +325,97 @@ function AddDealModal({ stage, profiles, onClose, onSaved }) {
               </option>
             ))}
           </select>
+        </div>
+
+        {stage !== 'closed' && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Expected Close</label>
+            <input type="date" value={form.expected_close_date} onChange={set('expected_close_date')} className={inputCls} />
+          </div>
+        )}
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Stage</label>
+          <select value={stage} onChange={(e) => setStage(e.target.value)} className={inputCls}>
+            {STAGES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {stage === 'demo_scheduled' && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Demo Date</label>
+            <input type="date" value={form.demo_date} onChange={set('demo_date')} className={inputCls} />
+          </div>
+        )}
+
+        {stage === 'decision_pending' && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Decision Criteria</label>
+            <select value={form.decision_criteria} onChange={set('decision_criteria')} className={inputCls}>
+              <option value="">— None —</option>
+              {DEAL_REASON_OPTIONS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {stage === 'closed' && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Outcome</label>
+            <select value={form.outcome} onChange={set('outcome')} className={inputCls}>
+              <option value="">— None —</option>
+              {OUTCOMES.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {stage === 'closed' && form.outcome === 'Won' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Plan Selected</label>
+              <input value={form.plan_selected} onChange={set('plan_selected')} className={inputCls} />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Kickoff Date</label>
+              <input type="date" value={form.kickoff_date} onChange={set('kickoff_date')} className={inputCls} />
+            </div>
+          </div>
+        )}
+
+        {stage === 'closed' && form.outcome === 'Lost' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Lost Reason</label>
+              <select value={form.lost_reason} onChange={set('lost_reason')} className={inputCls}>
+                <option value="">— None —</option>
+                {DEAL_REASON_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Follow-Up Date</label>
+              <input type="date" value={form.followup_date} onChange={set('followup_date')} className={inputCls} />
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
+          <textarea rows={3} value={form.notes} onChange={set('notes')} className={inputCls} />
         </div>
 
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
